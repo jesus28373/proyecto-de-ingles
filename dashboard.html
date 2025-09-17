@@ -1,0 +1,187 @@
+<!-- START OF FULL AND FINAL CODE FOR: dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body {
+            background-color: #111827; /* gray-900 */
+            background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0);
+            background-size: 25px 25px;
+        }
+        .message-card {
+            background-color: #ffffff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            transition: box-shadow 0.2s, opacity 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .status-unread { border-color: #3b82f6; /* blue-500 */ }
+        .status-read { border-color: #d1d5db; /* gray-300 */ }
+        .status-archived { border-color: #6b7280; /* gray-500 */ opacity: 0.75; }
+        
+        /* Modal Styles */
+        .modal-overlay { position: fixed; inset: 0; z-index: 50; background-color: rgba(0, 0, 0, 0.6); display: flex; justify-content: center; align-items: center; opacity: 0; visibility: hidden; transition: all 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal-content { background-color: white; color: #333; padding: 0; border-radius: 0.5rem; width: 90%; max-width: 600px; max-height: 80vh; overflow: hidden; transform: scale(0.9); transition: all 0.3s; position: relative; display: flex; flex-direction: column; }
+        .modal-overlay.active .modal-content { transform: scale(1); }
+        .modal-header { padding: 1rem 1.5rem; background-color: #f3f4f6; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 1.5rem; overflow-y: auto; }
+        .modal-close-btn { background: none; border: none; font-size: 2rem; cursor: pointer; color: #9ca3af; }
+    </style>
+</head>
+<body class="font-sans antialiased text-gray-800">
+
+    <!-- Dashboard Header -->
+    <header class="bg-gray-800 shadow-md">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex justify-between items-center">
+                <div class="text-2xl font-bold text-white"><span class="text-white">Software</span><span class="text-yellow-400">Engineer</span></div>
+                <button id="logout-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition">Logout</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Content -->
+    <main id="admin-dashboard" class="py-16">
+        <div class="container mx-auto px-6">
+            <h2 class="text-4xl font-bold text-center text-white mb-12">Message Inbox</h2>
+            <div class="max-w-5xl mx-auto min-h-[300px]" id="admin-message-list-container">
+                <!-- Los mensajes se insertarán aquí por JS -->
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const SERVER_IP = 'localhost'; // ▼▼▼ ¡RECUERDA CAMBIAR ESTO POR TU IP REAL! ▼▼▼
+        const apiUrl = `http://${SERVER_IP}:3000/api`;
+        const socket = io(`http://${SERVER_IP}:3000`);
+
+        // Element References
+        const messageListContainer = document.getElementById('admin-message-list-container');
+        const logoutBtn = document.getElementById('logout-btn');
+
+        // Security Check on Page Load
+        document.addEventListener('DOMContentLoaded', () => {
+            if (sessionStorage.getItem('isAdminAuthenticated') !== 'true') {
+                window.location.href = 'admin.html';
+            } else {
+                fetchAndRenderAdminMessages();
+            }
+        });
+        
+        // Logout Functionality
+        logoutBtn.addEventListener('click', () => {
+            sessionStorage.removeItem('isAdminAuthenticated');
+            window.location.href = 'admin.html';
+        });
+
+        function createMessageElement(msg) {
+            const card = document.createElement('div');
+            card.className = `message-card status-${msg.status || 'read'}`;
+            card.dataset.id = msg._id;
+
+            const date = new Date(msg.createdAt).toLocaleString('en-US');
+
+            card.innerHTML = `
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                    <div>
+                        <p class="font-bold text-lg">${msg.name}</p>
+                        <a href="mailto:${msg.email}" class="text-sm text-blue-600 hover:underline">${msg.email}</a>
+                        <p class="text-sm text-gray-500">${msg.phoneNumber}</p>
+                    </div>
+                    <span class="text-xs text-gray-400 mt-2 sm:mt-0">${date}</span>
+                </div>
+
+                <p class="text-gray-800 mb-4 bg-gray-50 p-3 rounded-md">${msg.message}</p>
+
+                <div class="bg-gray-100 p-3 rounded-md">
+                    <label for="notes-${msg._id}" class="text-xs font-bold text-gray-500">ADMIN NOTES:</label>
+                    <textarea id="notes-${msg._id}" class="w-full mt-1 p-2 border rounded-md text-sm" placeholder="Add a note...">${msg.adminNotes || ''}</textarea>
+                    <button class="save-note-btn mt-2 bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1 px-3 rounded transition">Save Note</button>
+                </div>
+
+                <div class="flex items-center justify-end mt-4 border-t pt-4 space-x-4">
+                    ${msg.status !== 'read' ? `<button class="mark-read-btn text-sm font-medium text-blue-600 hover:text-blue-800 transition">Mark as Read</button>` : ''}
+                    ${msg.status !== 'archived' ? `<button class="archive-btn text-sm font-medium text-gray-600 hover:text-gray-800 transition">Archive</button>` : ''}
+                    <button class="delete-btn text-sm font-medium text-red-500 hover:text-red-700 transition">Delete</button>
+                </div>
+            `;
+            return card;
+        }
+
+        async function updateMessage(id, data) {
+            try {
+                const response = await fetch(`${apiUrl}/update-message/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                });
+                if (!response.ok) throw new Error('Update failed');
+            } catch (error) {
+                console.error("Failed to update message:", error);
+                alert("Could not update the message. Please check the server connection.");
+            }
+        }
+
+        messageListContainer.addEventListener('click', async (e) => {
+            const card = e.target.closest('.message-card');
+            if (!card) return;
+            const messageId = card.dataset.id;
+
+            if (e.target.classList.contains('mark-read-btn')) {
+                await updateMessage(messageId, { status: 'read' });
+            }
+            if (e.target.classList.contains('archive-btn')) {
+                await updateMessage(messageId, { status: 'archived' });
+            }
+            if (e.target.classList.contains('save-note-btn')) {
+                const noteText = document.getElementById(`notes-${messageId}`).value;
+                await updateMessage(messageId, { adminNotes: noteText });
+            }
+            if (e.target.classList.contains('delete-btn')) {
+                if (confirm('Are you sure you want to permanently delete this message?')) {
+                    await fetch(`${apiUrl}/delete-message/${messageId}`, { method: 'DELETE' });
+                }
+            }
+        });
+
+        function setListState(state) {
+            let content = '';
+            if (state === 'loading') {
+                content = `<div class="text-center py-10 text-gray-400 animate-pulse"><svg class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0l-8-4-8 4" /></svg><p class="mt-2 text-lg font-medium">Loading Messages...</p></div>`;
+            } else if (state === 'empty') {
+                content = `<div class="text-center py-10 text-gray-400"><svg class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg><p class="mt-2 text-lg font-medium">The inbox is empty.</p><p class="text-sm">New messages will appear here automatically.</p></div>`;
+            }
+            messageListContainer.innerHTML = content;
+        }
+
+        async function fetchAndRenderAdminMessages() {
+            setListState('loading');
+            try {
+                const response = await fetch(`${apiUrl}/get-messages`);
+                const messages = await response.json();
+                
+                messageListContainer.innerHTML = '';
+                if (messages.length > 0) {
+                    messages.forEach(msg => messageListContainer.appendChild(createMessageElement(msg)));
+                } else {
+                    setListState('empty');
+                }
+            } catch (error) {
+                messageListContainer.innerHTML = '<div class="message-card text-red-500"><strong>Error:</strong> Could not connect to the server. Please ensure it is running and the IP is correct.</div>';
+            }
+        }
+        
+        socket.on('messages_updated', fetchAndRenderAdminMessages);
+    </script>
+</body>
+</html>
+<!-- END OF FULL AND FINAL CODE FOR: dashboard.html -->
